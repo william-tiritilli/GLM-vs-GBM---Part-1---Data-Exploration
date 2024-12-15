@@ -1,0 +1,114 @@
+---
+title: "EDA - Part 2 - Predictors exploration"
+output: html_document
+---
+
+# Study on the Driver age
+
+We want to see if the relationship between the outcome and the predictor is linear,
+and if not, what tools we can use to assess for non-linearity.
+
+```{r}
+# Load the data
+df<-read.csv("C:\\Users\\William\\Documents\\Data Science - ML\\Pricing Project_GLM_vs_GBM\\data.csv")
+
+# Split train / test
+set.seed(564738291) # seed
+u <- runif(dim(df)[1], min = 0, max = 1)
+df$train <- u < 0.7
+df$test <- !(df$train)
+```
+
+```{r first model}
+# Case 1: simple model - one predictor
+model_age1 <- glm(formula = ClaimNb ~ DriverAge,
+                  family = poisson(link = "log"),
+                  data = df,
+                  subset = train, offset = log(Exposure))
+summary(model_age1)
+```
+Is the relationship linear?
+```{r Relation}
+y1 <- predict(model_age1, type = "response", 
+              newdata = data.frame(DriverAge = 18:80, Exposure = 1))
+
+plot(18:80, y1, type = "l") # It is not linear, there is an exponential here
+plot(18:80, y1, type = "l", log="y") # in log, it is linear
+```
+We observe a light curve that indicates that the relation between the age of the driver and the claims frequency is not linear.
+Using a linear model does not make a lot of sense.
+
+# Addition of splines
+
+```{r Splines}
+library(splines)
+
+# Addition of splines
+reg2 <- glm(ClaimNb ~ bs(DriverAge), data = df,
+            subset = train, family = poisson,
+            offset = log(Exposure))
+summary(reg2) # We get a linear model on each of the transformation.
+```
+```{r}
+# We compare with the previous linear model, without the splines
+# Same process as above
+nd <- data.frame(DriverAge = 18:80, Exposure = 1)
+y <- predict(reg2, type = "response", newdata = nd, se.fit=TRUE)
+plot(18:80, y$fit, type = "l")
+#plot(18:80, y$fit, type = "l", log="y")
+
+y1 <- predict(model_age1, type = "response", newdata = nd)
+lines(nd$DriverAge,y1,lty=2 ) + title("Model with splines vs first model (with CI)")
+points(nd$DriverAge, y$fit, pch=19)
+segments(nd$DriverAge, y$fit-2*y$se.fit, nd$DriverAge, y$fit+2*y$se.fit)
+```
+The shape show a decrease the more the driver is experienced, but, it tends to back up in the 50s.
+Experience comes quickly translating into a high decrease, then stabilization, and an increase after 50.
+
+We observe that we are 100% more in term of frequency on the young driver. The linear model does not work, so we need to take that non-linear effect into account.
+
+# Tentative with a polynomial order 3
+```{r Polynome}
+reg_age3 <- glm(ClaimNb ~ poly(DriverAge,3), data = df,
+                subset = train, family = poisson,
+                offset = log(Exposure))
+summary(reg_age3)
+
+y4 <- predict(reg_age3, type = "response", newdata = nd, se.fit = TRUE)
+
+# With the IC
+plot(18:80, y4$fit, type = "l") # same 
+```
+Very similar shape as above
+
+# Binning the age?
+
+Solution preferred for a commercial rate grid. 
+```{r}
+reg3 <- glm(ClaimNb ~ cut(DriverAge, breaks = seq(18, 80, by=8)), data = df,
+            subset = train, family = poisson,
+            offset = log(Exposure))
+summary(reg3)
+y3 <- predict(reg3, type = "response", newdata = nd, se.fit = TRUE)
+#print(y3)
+
+# Replace the NA by 0
+#y3_corrected <- y3 %>% replace(is.na(.), 0)
+
+#plot(18:80, y3_corrected, type = "l")
+#plot(18:80, y3_corrected, type = "l", log="y")
+
+# With the IC
+plot(18:80, y3$fit, type = "l") # same 
+
+lines(nd$DriverAge,y1) + title("Model with band vs first model")
+```
+ Here the automatic split defines 6 bands. We chose to obtain a constant claims frequency for each of them. We get the same trend as the previous models.
+
+
+
+
+
+
+
+
