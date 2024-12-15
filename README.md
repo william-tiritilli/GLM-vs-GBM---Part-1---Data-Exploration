@@ -3,4 +3,5 @@ This repo is the first of two regarding a study that aims to compare the GLM and
 -	“classic visuals” to get a feel of the data,
 -	Collinearity between variables?
 -	Is the relation between the outcome and the potential predictor linear?<br />
-  o	Study on the driver age.
+  o	study on the driver age.<br />
+![image](https://github.com/user-attachments/assets/ecf793e3-c2eb-42b3-bae3-2c82538ab501)
