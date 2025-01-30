@@ -1,0 +1,293 @@
+---
+title: "EDA - Part 1 - Data Exploration"
+output: html_document
+---
+
+### A glimpse on "classic" insurance data.
+
+This study shows different steps to analyze the data before diving into the modeling part.
+
+```{r}
+# Usual libraries
+library(dplyr)
+library(rlang)
+library(caret)
+library(ggplot2)
+library(tidyr)
+library(broom) # convert statistical object into tidy table
+```
+
+```{r}
+# Load the data
+df<-read.csv("C:\\Users\\William\\Documents\\Data Science - ML\\Pricing Project_GLM_vs_GBM\\data.csv")
+
+# Replace the NA by 0 for severity
+df <- df %>% mutate(ClaimAmount = ifelse(is.na(ClaimAmount), 0, ClaimAmount))
+
+dim(df)
+glimpse(df)
+```
+
+### Basic Charts
+A bar chart showing the claims count split:
+```{r Claims number}
+couleur <- "blue"
+g <- ggplot(df, aes(ClaimNb )) + theme_bw() +
+geom_bar(aes(weight = Exposure), col = "black",
+fill = couleur) +
+labs(y = "Abs freq (in exposure)") +
+ggtitle("Claims Number split")
+g
+```
+
+Claims severity density, with its right-skewed shate distribution. Gamma or Negative log-Normal are often the most usual candidates to model the severity of a claim.
+```{r Severity - Density plot}
+g_dens <- df%>% filter(ClaimAmount %in% c(1:10000)) %>% ggplot( aes(x = ClaimAmount)) +
+geom_density(data = df%>% filter(ClaimAmount %in% c(1:10000)), col = 'black', fill = couleur, alpha = 0.8) +
+ggtitle("Car Insurance Data - Claim Severity")
+g_dens
+```
+We can visualize the age distribution with a histogram:
+```{r}
+driver.age_hist <-ggplot(df, aes(x=DriverAge)) + theme_bw() +
+geom_histogram(binwidth = 1, data=df, col = "black", fill = couleur, alpha = 0.5) +
+labs(y = "Count") +
+ggtitle("Driver age distribution")
+driver.age_hist
+```
+
+### Basic Interpretation
+
+#### Null model
+We start with the model with no parameters, only the intercept.
+```{r Null Model}
+#########################################
+# Training a model for claims frequency #
+#########################################
+
+# Split train / test
+# index <- createDataPartition(df$ClaimNb, p = 0.7, list = FALSE)
+# head(index)
+# 
+# train <- df[index,]
+# test <- df[-index,]
+
+set.seed(564738291)
+u <- runif(dim(df)[1], min = 0, max = 1)
+df$train <- u < 0.7
+df$test <- !(df$train)
+#mis.vars <- c(mis.vars, "train", "test")
+
+# Step 1:
+# Null Model
+null_model <- glm(formula = ClaimNb ~ 1,
+                  family = poisson(link = "log"),
+                  data = df,
+                  subset = train, offset = log(Exposure))
+
+summary(null_model)
+
+coefficients(null_model)
+
+# Verification if the exp of the intercept is equal to the
+# empirical frequency (mean)
+exp(null_model$coefficients) #ok mean of the number of claims per year.
+
+emp_freq <- sum(df$ClaimNb)/sum(df$Exposure)
+
+predict(null_model,newdata=data.frame(Exposure=1))
+predict(null_model,type="response", newdata=data.frame(Exposure=1)) # takes the exponential of the coefficient
+```
+We verify that the null model is only composed by the intercept which is equal to the empirical frequency shown by the dataset.
+
+#### Spme interpretations
+```{r Varialbe exploration}
+# Step 2: 
+# Exploration variable per variable
+with(df,table(Gas, ClaimNb)) # we don't have the same exposition
+# the exposure avoids to make easy conclusion
+```
+
+```{r Model with one predictor: Gas type}
+# With gas
+m1 <- glm(formula = ClaimNb ~ Gas,
+          family = poisson(link = "log"),
+          data = df,
+          subset = train, offset = log(Exposure))
+summary(m1)
+```
+Interpretation:
+The variable "regular" is significantly different from "diesel".
+We should be -14% less high in term of claim frequency for the regular car.
+```{r Prediction}
+# Prediction on the levels taken separately
+predict(m1,type="response", newdata=data.frame(Gas = c("Regular", "Diesel"), 
+                                               Exposure=1))
+```
+
+```{r Some checks on the coefficient}
+# Intercept
+m1$coefficients[1]
+exp(m1$coefficients[1])
+
+# Regular level coefficent
+m1$coefficients[2]
+exp(m1$coefficients[2])
+```
+
+```{r}
+# We can verify the results:
+# A frequency of 7%,
+print(0.08178971 * 0.8696783) 
+
+# Which represent ~13% less than the average claim frequency for Diesel driver, everything else constant.
+print((0.07113074-0.08178971)/0.08178971) 
+```
+We find the results given by the prediction.
+
+### AIC and Deviance graph
+A representation to get a feel of what would be the most "interesting" predictors in terms of AIC and Deviance reduction:
+```{r}
+##############################################
+# Step 2: Evaluation of potential predictors #
+##############################################
+
+# Test of the different potential covariates
+
+# Set up a grid search
+result_grid <- expand.grid(
+  covariates = c(1, 'Power', 'CarAge', 'DriverAge', 'Brand', 'Gas', 'Region', 'Density'),
+  AIC = NA,
+  Deviance = NA)
+# print(result_grid)
+
+# Run a for loop adding building each time a model with one parameter
+for(i in seq_len(nrow(result_grid))) {
+  fmla <- as.formula(paste("ClaimNb ~ ", result_grid$covariates[i]))
+  f <- glm(fmla,
+           data = df,
+           subset = train,
+           family = poisson(link = "log"),
+           offset = log(Exposure))
+  #rms[v] <- RMSEP(dta$clm.count[dta$train],
+  #predict(f, newdata = dta[dta$train,],
+  #type = "response"))
+  result_grid$AIC[i] <- f$aic
+  result_grid$Deviance[i] <- f$deviance
+}
+knitr::kable(result_grid, format = "markdown")
+#clipr::write_clip(result_grid)
+
+# Graph AIC & Deviance
+scatter <- ggplot(result_grid, aes(x=AIC, y=Deviance)) +
+  geom_point() + # Show dots
+  geom_text(
+    label=result_grid$covariates, 
+    nudge_x = 0.25, nudge_y = 0.25, 
+    check_overlap = T 
+  ) +
+  labs(
+    title = "AIC by variable")
+
+# Final result
+print(scatter)
+```
+Driver age and Region are two strong candidates to be included in a claims frequency model. Power looks to ave less impact.
+
+### Exploration of Region
+It appears that some Region can be grouped together. We will keep that observation in mind when training the model.
+```{r}
+# Another variable: Region 
+with(df, table(Region, ClaimNb))
+
+m2 <- glm(formula = ClaimNb ~ Region,
+          family = poisson(link = "log"),
+          data = df,
+          subset = train, offset = log(Exposure))
+summary(m2)
+# Some region are not significant
+
+# Isolate the region's name
+region_name <- df %>% group_by(Region) %>% summarise(count=n())
+
+# Run a prediction for each of the Region
+# We retrieve 10 avg frequency
+y=predict(m2,newdata=
+            data.frame(Region=region_name$Region,
+                       Exposure=1),type="response", 
+          se.fit =TRUE) # we add the CI
+
+# Predictions and CI
+pred_values <- y$fit
+lower_CI <- y$fit-y$se.fit
+upper_CI <- y$fit+y$se.fit
+
+# Definition of the region for each prediction
+vec_Region <-c("Centre", "Aquitaine", "Basse-Normandie", "Bretagne", "Haute-Normandie", "Ile-de-France", "Limousin", "Nord-Pas-de-Calais", "Pays-de-la-Loire", "Poitou-Charentes")
+
+# Create the data frame
+predicted_df <- data.frame(predicted_value=pred_values, Region = vec_Region, upper = upper_CI, lower = lower_CI)
+
+#print(predicted_df)
+
+# Load the ggplot2 package
+library(ggplot2)
+
+# Create a bar plot
+ggplot(predicted_df, aes(x = Region, y = predicted_value)) +
+  geom_bar(stat = "identity",fill = "skyblue", color = "black") +
+   geom_errorbar(aes(ymin = lower, ymax = upper), 
+                width = 0.2, color = "red") +
+  labs(title = "Claims frequency by Region", x = "Region", y = "Predicted value") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+It appears that some Region can be grouped together. We will keep that observation in mind when training the model.
+
+### Exploration of Driver's age
+
+```{r}
+library(ggplot2)
+library(dplyr)
+# Creation of the data frame
+graph_data <- df %>% group_by(DriverAge) %>% summarise(Sum_Expo = sum(Exposure),
+Number_of_Claims = sum(ClaimNb),
+Emp_freq = sum(ClaimNb)/sum(Exposure))
+# Bar plot overlapping with bar chart
+# A few constants
+freqColor <- "red"
+expoColor <- rgb(0.2, 0.6, 0.9, 1)
+# For the different scales,
+# Set the following two values to values close to the limits of the data
+# you can play around with these to adjust the positions of the graphs;
+# the axes will still be correct)
+ylim.prim <- c(0, 1) # for claim frequency
+ylim.sec <- c(0, 7500) # for Exposure --> need to go way above the max to let
+# the data appearing in the chart
+# For explanation:
+# https://stackoverflow.com/questions/32505298/explain-ggplot2-warning-removed-k-rows-containing-missing-values
+# The following makes the necessary calculations based on these limits,
+# and makes the plot itself:
+b <- diff(ylim.prim)/diff(ylim.sec)
+a <- ylim.prim[1] - b*ylim.sec[1]
+# Building the graph
+graph_freq <- ggplot(graph_data, aes(x=DriverAge, Emp_freq)) +
+geom_line( aes(y=Emp_freq), size=1, color=freqColor) +
+geom_bar( aes(y=a+Sum_Expo*b), stat="identity", size=.1, fill=expoColor, color="black", alpha=.4) +
+scale_y_continuous(
+# Features of the first axis
+name = "Empirical Frequency", limits = c(0, 1.0),
+# Add a second axis and specify its features
+sec.axis = sec_axis(~ (. - a)/b, name = "Exposure")) +
+#theme_ipsum() +
+theme(
+axis.title.y = element_text(color = freqColor, size = 13),
+axis.title.y.right = element_text(color = expoColor, size = 13)
+) +
+ggtitle("Empirical Claims Frequency by Driver Age")
+
+graph_freq
+```
+
+The frequency decreases as the driver is more experienced, with a noticeable drop between 18 and 25 years old. The rate becomes more volatile after 75 years old.
+
