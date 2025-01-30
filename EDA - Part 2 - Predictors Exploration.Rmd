@@ -49,6 +49,7 @@ reg2 <- glm(ClaimNb ~ bs(DriverAge), data = df,
             offset = log(Exposure))
 summary(reg2) # We get a linear model on each of the transformation.
 ```
+
 ```{r}
 # We compare with the previous linear model, without the splines
 # Same process as above
